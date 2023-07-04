@@ -70,8 +70,7 @@ def generate_sdf(G: DiGraph, accelerator: Accelerator, priority: Priority):
 
     for r in resources:
         nodes = list(map(lambda n: n[0], filter(lambda n: n[1]['resource'] == r, sdf.nodes(data=True))))
-        sorted(nodes, key=lambda n: priority.get(n))
-        print(f"Priority {r} -> {nodes}")
+        nodes = sorted(nodes, key=lambda n: priority.get(n))
         for n,m in pairwise(nodes):
             sdf.add_edge(n, m, initialTokens=0)
 
@@ -132,6 +131,19 @@ def generate_sdf(G: DiGraph, accelerator: Accelerator, priority: Priority):
 
     #nx.draw_networkx(sdf)
     #plt.show()
+
+def schedule_nodes():
+    for e in [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]:
+        yield e
+
+    for i in range(0, 1000):
+        
+        if i < 29:
+            yield (0, 2*i + 6)
+            yield (0, 2*i + 7)
+        yield (2, 2*i + 0)
+        yield (2, 2*i + 1)
+        
 
 def schedule_graph(
     G: DiGraph,
@@ -206,7 +218,6 @@ def schedule_graph(
         for op, tensor in n.operand_tensors.items():
             tensor.initialize_core_priorities(G, n)
             if op in n.constant_operands:
-                priority.add(f"Load({n.id[0]},{tensor.loop_ranges},{op})")
                 if not accelerator.contains_tensor(tensor, offchip_core_id):
                     accelerator.memory_manager.add_tensor_to_core(
                         tensor=tensor,
@@ -215,7 +226,7 @@ def schedule_graph(
                         timestep_end=0,
                         tensors_to_avoid_evicting=[],
                     )
-
+    sn = schedule_nodes()
     done = False
     while not done:
         # If this core doesn't have any candidates, continue to the next core
@@ -231,6 +242,20 @@ def schedule_graph(
             preds_ends, cn_candidates = zip(*candidates)
             best_candidate = max(cn_candidates, key=attrgetter("id"))
             preds_end = preds_ends[cn_candidates.index(best_candidate)]
+        elif candidate_selection == "dumb":
+            # Get the best candidate: the one with the highest layer_id
+            preds_ends, cn_candidates = zip(*candidates)
+            best_candidate = max(cn_candidates, key=lambda x: (x.id[1], x.id[0]))
+            preds_end = preds_ends[cn_candidates.index(best_candidate)]
+        elif candidate_selection == "preprog":
+            print(f"Candidates: {candidates}")
+            layer1 = [c for c in candidates if c[1].id[0] == 1]
+            if len(layer1) > 0:
+                preds_end, best_candidate = layer1[0]
+            else:
+                id = next(sn)
+                print(f"id {id}")
+                (preds_end, best_candidate) = next(c for c in candidates if c[1].id == id)
         else:
             raise ValueError(
                 f"Scheduler's CN candidate_selection criterion '{candidate_selection}' is not supported."
@@ -258,9 +283,6 @@ def schedule_graph(
             best_candidate.operand_tensors[op]
             for op in best_candidate.constant_operands
         ]
-        for (op, tensor) in zip(tensors_operands, tensors_this_candidate_needs):
-            e = next(filter(lambda x: x[1] == op, best_candidate.memory_operand_links.items()))[0]
-            priority.add(f"Load({n.id[0]},{tensor.loop_ranges},{e})")
         # Non-constant operands
         for pred, best_candidate, edge_data in sorted(
             G.in_edges(best_candidate, data=True), key=itemgetter(0)
@@ -302,6 +324,8 @@ def schedule_graph(
             tensors_this_candidate_needs, tensors_operands
         ):
             if tensor_operand not in best_candidate.too_large_operands:
+                e = next(filter(lambda x: x[1] == tensor_operand, best_candidate.memory_operand_links.items()))[0]
+                priority.add(f"Load({best_candidate.id[0]},{tensor.loop_ranges},{e})")
                 # Transfer the tensor
                 worst_case_timestep = timestep
                 (
@@ -459,7 +483,7 @@ def schedule_graph(
     )
     latency = max(cn_end_times, link_end_times)
     # print("Scheduling completed")
-    # print(f"Latency found = {latency}")
+    print(f"Latency found = {latency}")
     generate_sdf(G, accelerator, priority)
     return (
         latency,

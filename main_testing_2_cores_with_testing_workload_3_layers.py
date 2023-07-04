@@ -79,4 +79,6 @@ plot_timeline_brokenaxes(
     plot_data_transfer,
     fig_path=timeline_fig_path,
 )
+import matplotlib.pyplot as plt
+plt.show()
 # plot_memory_usage(scme[0].accelerator.memory_manager, fig_path=memory_fig_path)
