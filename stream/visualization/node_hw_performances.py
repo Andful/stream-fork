@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # Run these if this doesn't work:
 # $ sudo apt install msttcorefonts -qq
 # $ rm ~/.cache/matplotlib -rf
-matplotlib.rc("font", family="Arial")
+# matplotlib.rc("font", family="Arial")
 
 # MPL FONT SIZES
 SMALL_SIZE = 14
@@ -60,11 +60,14 @@ def visualize_node_hw_performances_pickle(
     plt.rc("axes", labelsize=BIGGER_SIZE)  # fontsize of the x and y labels
     plt.rc("xtick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
     plt.rc("ytick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
-    plt.rc("legend", fontsize=BIG_SIZE)  # legend fontsize
+    plt.rc("legend", fontsize=SMALL_SIZE)  # legend fontsize
     plt.rc("figure", titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
-    with open(pickle_filepath, "rb") as handle:
-        node_hw_performances = pickle.load(handle)
+    if isinstance(pickle_filepath, str):
+        with open(pickle_filepath, "rb") as handle:
+            node_hw_performances = pickle.load(handle)
+    else:
+        node_hw_performances = pickle_filepath
 
     # first_key = next(iter(node_hw_performances))
     # node_hw_performances = {first_key: node_hw_performances[first_key]}
@@ -86,7 +89,7 @@ def visualize_node_hw_performances_pickle(
     min_latency_per_node = {}
     min_energy_per_node = {}
     for node, hw_performances in node_hw_performances.items():
-        node_labels.append(f"L{node.id[0]}\nN{node.id[1]}")
+        node_labels.append(f"L{node.id[0]}\nN{node.id[1]}\nx{scale_factors[node]}")
         min_latency_per_node[node] = float("inf")
         min_energy_per_node[node] = float("inf")
         for core, cme in hw_performances.items():
@@ -110,8 +113,9 @@ def visualize_node_hw_performances_pickle(
     best_case_energy = sum(min_energy_per_node.values())
 
     # COLORMAP
-    colormap = plt.get_cmap("Set1")
-    colors = {core: colormap.colors[i] for i, core in enumerate(cores)}
+    colormap = list(plt.cm.rainbow(np.linspace(0, 1, len(cores))))
+    # colormap = plt.get_cmap("Set1")
+    colors = {core: colormap[i] for i, core in enumerate(cores)}
 
     x = np.arange(len(node_labels))
     width = 0.8 / len(cores)
@@ -147,7 +151,7 @@ def visualize_node_hw_performances_pickle(
         ax.yaxis.grid(
             which="minor", linestyle=":", linewidth=0.25, color=(0.2, 0.2, 0.2)
         )
-    axs[0].legend(loc="upper left", bbox_to_anchor=(0.0, 1.15), ncol=len(cores))
+    axs[0].legend(loc="upper left", bbox_to_anchor=(0.0, 1.15), ncol=min(len(cores), 7))
     axs[0].set_title(
         f"Worst (no overlap) best-case latency = {worst_case_latency:.3e} Cycles",
         loc="right",

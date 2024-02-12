@@ -56,6 +56,7 @@ mainstage = MainStage(
     cn_define_mode=CN_define_mode,
     hint_loops=hint_loops,
     scheduler_candidate_selection="latency",
+    operands_to_prefetch=["W"],
 )
 
 # Launch the MainStage
@@ -73,8 +74,7 @@ timeline_fig_path = "outputs/schedule_plot.png"
 memory_fig_path = "outputs/memory_plot.png"
 
 plot_timeline_brokenaxes(
-    scme[0].workload,
-    scme[0].accelerator,
+    scme[0],
     draw_dependencies,
     section_start_percent,
     percent_shown,
