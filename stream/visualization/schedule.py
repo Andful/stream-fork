@@ -403,6 +403,7 @@ def add_dependencies(fig, scme, colors, layer_ids):
                     hoverinfo="none",
                     line=line,
                     marker=marker,
+                    visible=False,
                 )
             )
     # fig.for_each_trace(
