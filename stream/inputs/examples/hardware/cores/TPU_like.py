@@ -1,11 +1,11 @@
 import os
-from zigzag.classes.hardware.architecture.memory_hierarchy import MemoryHierarchy
-from zigzag.classes.hardware.architecture.memory_level import MemoryLevel
-from zigzag.classes.hardware.architecture.operational_unit import Multiplier
-from zigzag.classes.hardware.architecture.operational_array import MultiplierArray
-from zigzag.classes.hardware.architecture.memory_instance import MemoryInstance
-from zigzag.classes.hardware.architecture.accelerator import Accelerator
-from zigzag.classes.hardware.architecture.core import Core
+from zigzag.hardware.architecture.MemoryHierarchy import MemoryHierarchy
+from zigzag.hardware.architecture.memory_level import MemoryLevel
+from zigzag.hardware.architecture.operational_unit import Multiplier
+from zigzag.hardware.architecture.operational_array import MultiplierArray
+from zigzag.hardware.architecture.memory_instance import MemoryInstance
+from zigzag.hardware.architecture.Accelerator import Accelerator
+from zigzag.hardware.architecture.Core import Core
 
 
 def get_memory_hierarchy(multiplier_array):
@@ -28,7 +28,7 @@ def get_memory_hierarchy(multiplier_array):
 
     reg_O_1K = MemoryInstance(
         name="rf_1KB",
-        size=16,
+        size=1024 * 8,
         r_bw=16,
         w_bw=16,
         r_cost=0.54,

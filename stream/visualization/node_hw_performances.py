@@ -52,9 +52,7 @@ def autolabel(rects, ax, indices=[], labels=[], offsets=None):
         index += 1
 
 
-def visualize_node_hw_performances_pickle(
-    pickle_filepath, scale_factors=None, fig_path=None
-):
+def visualize_node_hw_performances_pickle(pickle_filepath, scale_factors=None, fig_path=None):
     plt.rc("font", size=SMALL_SIZE)  # controls default text sizes
     plt.rc("axes", titlesize=SMALL_SIZE)  # fontsize of the axes title
     plt.rc("axes", labelsize=BIGGER_SIZE)  # fontsize of the x and y labels
@@ -63,8 +61,11 @@ def visualize_node_hw_performances_pickle(
     plt.rc("legend", fontsize=SMALL_SIZE)  # legend fontsize
     plt.rc("figure", titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
-    with open(pickle_filepath, "rb") as handle:
-        node_hw_performances = pickle.load(handle)
+    if isinstance(pickle_filepath, str):
+        with open(pickle_filepath, "rb") as handle:
+            node_hw_performances = pickle.load(handle)
+    else:
+        node_hw_performances = pickle_filepath
 
     # first_key = next(iter(node_hw_performances))
     # node_hw_performances = {first_key: node_hw_performances[first_key]}
@@ -73,8 +74,7 @@ def visualize_node_hw_performances_pickle(
         scale_factors = {node: 1 for node in node_hw_performances}
     else:
         scale_factors = {
-            next(node for node in node_hw_performances if node.id == k): v
-            for k, v in scale_factors.items()
+            next(node for node in node_hw_performances if node.id == k): v for k, v in scale_factors.items()
         }
 
     if not fig_path:
@@ -86,7 +86,7 @@ def visualize_node_hw_performances_pickle(
     min_latency_per_node = {}
     min_energy_per_node = {}
     for node, hw_performances in node_hw_performances.items():
-        node_labels.append(f"L{node.id[0]}\nN{node.id[1]}")
+        node_labels.append(f"L{node.id}\nN{node.sub_id}\nx{scale_factors[node]}")
         min_latency_per_node[node] = float("inf")
         min_energy_per_node[node] = float("inf")
         for core, cme in hw_performances.items():
@@ -116,10 +116,7 @@ def visualize_node_hw_performances_pickle(
 
     x = np.arange(len(node_labels))
     width = 0.8 / len(cores)
-    offsets = [
-        -(width / 2) - ((len(cores) - 1) // 2) * width + i * width
-        for i in range(len(cores))
-    ]
+    offsets = [-(width / 2) - ((len(cores) - 1) // 2) * width + i * width for i in range(len(cores))]
 
     fig, axs = plt.subplots(2, 1, figsize=(20, 10), sharex=True)
     for core, offset in zip(cores, offsets):
@@ -127,27 +124,19 @@ def visualize_node_hw_performances_pickle(
         core_energies = []
         for node, hw_performances in node_hw_performances.items():
             if core in hw_performances:
-                core_latencies.append(
-                    scale_factors[node] * hw_performances[core].latency_total2
-                )
-                core_energies.append(
-                    scale_factors[node] * hw_performances[core].energy_total
-                )
+                core_latencies.append(scale_factors[node] * hw_performances[core].latency_total2)
+                core_energies.append(scale_factors[node] * hw_performances[core].energy_total)
             else:
                 core_latencies.append(0)
                 core_energies.append(0)
         for ax, y_values in zip(axs, [core_latencies, core_energies]):
-            rects = ax.bar(
-                x + offset, y_values, width, label=f"{core}", color=colors[core]
-            )
+            rects = ax.bar(x + offset, y_values, width, label=f"{core}", color=colors[core])
     for ax in axs:
         ax.set_xticks(x)
         ax.set_xticklabels(node_labels)
         ax.set_yscale("log")
         ax.yaxis.grid(which="major", linestyle="-", linewidth=0.5, color="black")
-        ax.yaxis.grid(
-            which="minor", linestyle=":", linewidth=0.25, color=(0.2, 0.2, 0.2)
-        )
+        ax.yaxis.grid(which="minor", linestyle=":", linewidth=0.25, color=(0.2, 0.2, 0.2))
     axs[0].legend(loc="upper left", bbox_to_anchor=(0.0, 1.15), ncol=min(len(cores), 7))
     axs[0].set_title(
         f"Worst (no overlap) best-case latency = {worst_case_latency:.3e} Cycles",

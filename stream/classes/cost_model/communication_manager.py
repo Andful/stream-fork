@@ -1,15 +1,22 @@
 import itertools
+from math import ceil
+from typing import TYPE_CHECKING
 import networkx as nx
 
-from zigzag.classes.hardware.architecture.core import Core
+from stream.classes.workload.computation_node import ComputationNode
+from zigzag.datatypes import Constants, MemoryOperand
+from zigzag.hardware.architecture.Core import Core
 from stream.classes.workload.tensor import Tensor
 from stream.classes.hardware.architecture.utils import intersections
+
+if TYPE_CHECKING:
+    from stream.classes.hardware.architecture.accelerator import Accelerator
 
 
 class CommunicationEvent:
     """Represents a communication event involving one or more CommunicationLinks."""
 
-    def __init__(self, id, tasks) -> None:
+    def __init__(self, id: int, tasks) -> None:
         # Sanity checks
         assert len(tasks) > 0
         assert all([t.type == tasks[0].type] for t in tasks)
@@ -38,18 +45,21 @@ class CommunicationLinkEvent:
         - a list of tensors relevant for the event:
             * the tensor being transferred
             * the tensor(s) for which we are blocking
+        - an activity percentage:
+            * the percentage of the link bandwidth used
     """
 
-    def __init__(self, type, start, end, tensors, energy) -> None:
+    def __init__(self, type, start, end, tensors, energy, activity=100) -> None:
         self.type = type
         self.start = start
         self.end = end
         self.duration = self.end - self.start
         self.tensors = tensors
         self.energy = energy
+        self.activity = activity
 
     def __str__(self) -> str:
-        return f"CommunicationLinkEvent(type={self.type}, start={self.start}, end={self.end}, tensors={self.tensors}, energy={self.energy:.2e})"
+        return f"CommunicationLinkEvent(type={self.type}, start={self.start}, end={self.end}, tensors={self.tensors}, energy={self.energy:.2e}, activity={self.activity:.2f})"
 
     def __repr__(self) -> str:
         return str(self)
@@ -66,7 +76,7 @@ class CommunicationLinkEvent:
 class CommunicationManager:
     """Manages the inter-core and offchip communication of an Accelerator."""
 
-    def __init__(self, accelerator) -> None:
+    def __init__(self, accelerator: "Accelerator") -> None:
         self.accelerator = accelerator
         self.shortest_paths = self.get_shortest_paths()
         self.pair_links = self.get_links_for_all_core_pairs()
@@ -89,13 +99,11 @@ class CommunicationManager:
         for pair, path in self.shortest_paths.items():
             traversed_edges = [(i, j) for i, j in zip(path, path[1:])]
             communication_links[pair] = [
-                self.accelerator.cores.edges[traversed_edge]["cl"]
-                for traversed_edge in traversed_edges
+                self.accelerator.cores.edges[traversed_edge]["cl"] for traversed_edge in traversed_edges
             ]
-            # print(pair, communication_links[pair])
         return communication_links
 
-    def get_links_for_pair(self, sender, receiver):
+    def get_links_for_pair(self, sender: Core, receiver: Core):
         """Return the list of traversed CommunicationLinks for sending data from sender core to receiver core.
 
         Args:
@@ -104,7 +112,7 @@ class CommunicationManager:
         """
         return self.pair_links[(sender, receiver)]
 
-    def get_links_for_pair_id(self, sender_id, receiver_id):
+    def get_links_for_pair_id(self, sender_id: int, receiver_id: int):
         """Return the list of traversed CommunicationLinks for sending data from sender core to receiver core.
 
         Args:
@@ -123,8 +131,8 @@ class CommunicationManager:
     def update_links(
         self,
         tensor: Tensor,
-        sender: Core or int,
-        receiver: Core or int,
+        sender: Core | int,
+        receiver: Core | int,
         receiver_memory_operand: str,
         start_timestep: int,
         duration: int,
@@ -184,9 +192,15 @@ class CommunicationManager:
         return link_energy_cost, memory_energy_cost
 
     def block_offchip_links(
-        self, too_large_operands, core_id, start_timestep, duration, cn
+        self,
+        too_large_operands: list[MemoryOperand],
+        core_id: int,
+        start_timestep: int,
+        duration: int,
+        cn: ComputationNode,
     ) -> int:
-        """Block the communication link between 'core' and the offchip core starting at timestep 'start_timestep' for duration 'duration'.
+        """Block the communication link between 'core' and the offchip core starting at timestep 'start_timestep' for
+        duration 'duration'.
 
         Args:
             too_large_operands (list): List of insufficient memory operands. This decides which links to block
@@ -195,68 +209,53 @@ class CommunicationManager:
             duration (int): The duration of the blocking in cycles.
             cn (ComputationNode): The computational node for which we are blocking the links.
         """
-        links_to_block = set()
+        links_to_block = dict()
         core = self.accelerator.get_core(core_id)
         offchip_core = self.accelerator.get_core(self.accelerator.offchip_core_id)
-        if "O" in too_large_operands:
-            links_to_block.update(set(self.get_links_for_pair(core, offchip_core)))
-        if [op for op in too_large_operands if op != "O"]:
-            links_to_block.update(set(self.get_links_for_pair(offchip_core, core)))
+        if Constants.OUTPUT_MEM_OP in too_large_operands:
+            links_to_offchip = set(self.get_links_for_pair(core, offchip_core))
+            req_bw_to_offchip = cn.offchip_bw.wr_in_by_low
+            for link in links_to_offchip:
+                links_to_block[link] = links_to_block.get(link, 0) + req_bw_to_offchip
+        if [op for op in too_large_operands if op != Constants.OUTPUT_MEM_OP]:
+            links_from_offchip = set(self.get_links_for_pair(offchip_core, core))
+            req_bw_from_offchip = cn.offchip_bw.rd_out_to_low
+            for link in links_from_offchip:
+                links_to_block[link] = links_to_block.get(link, 0) + req_bw_from_offchip
         if not too_large_operands:
             return start_timestep
-        links_to_block = list(links_to_block)
-        # Get idle window of the involved links
-        block_start = self.get_links_idle_window(
-            links_to_block, start_timestep, duration
-        )
         # Get the tensors for which we are blocking based on the operands
         tensors = []
         for mem_op in too_large_operands:
-            layer_op = next(
-                k for k, v in cn.memory_operand_links.items() if v == mem_op
-            )
+            layer_op = cn.memory_operand_links.mem_to_layer_op(mem_op)
             tensors.append(cn.operand_tensors[layer_op])
-        for link in links_to_block:
-            link.block(block_start, duration, tensors)
+        # Get idle window of the involved links
+        block_start = self.get_links_idle_window(links_to_block, start_timestep, duration, tensors)
+        # Get the
+        for link, req_bw in links_to_block.items():
+            req_bw = ceil(req_bw)
+            link.block(block_start, duration, tensors, activity=req_bw)
         return block_start
 
-    def get_links_idle_window(
-        self, links: list, best_case_start: int, duration: int
-    ) -> int:
+    def get_links_idle_window(self, links: dict, best_case_start: int, duration: int, tensors: list[Tensor]) -> int:
         """Return the timestep at which tensor can be transfered across the links.
         Both links must have an idle window large enough for the transfer.
         The timestep must be greater than or equal to best_case_start.
 
         Args:
-            links (list): Set of the CommunicationLinks involved in the transfer.
+            links (dict): CommunicationLinks involved in the transfer and their required bandwidth.
             best_case_start (int): The best case start timestep of the transfer.
             duration (int): The required duration of the idle window.
+            tensors (list): The tensors to be transferred. Used to broadcast from previous transfer.
         """
         assert len(links) > 0
-
-        link = links[0]
-        idle_intersections = link.idle_periods
-        idle_intersections = [
-            period for period in idle_intersections if period[1] - period[0] >= duration
-        ]
-
-        for link in links[1:]:
-            idle_intersections = intersections(idle_intersections, link.idle_periods)
-            idle_intersections = [
-                period
-                for period in idle_intersections
-                if period[1] - period[0] >= duration
-            ]
-        # Pick the first idle intersection that satisfied all the constraints
-        if not idle_intersections:
-            raise ValueError(f"There is no overlapping idle time for {links}.")
-        # Get the first idle window that has a long enough duration
-        # when taking into account the best case start timestep.
-        for idle_window in idle_intersections:
-            start = max(idle_window[0], best_case_start)
-            end = idle_window[1]
-            if end - start >= duration:
-                return start
-        raise ValueError(
-            "There is no long enough idle period with a late enough start time."
-        )
+        idle_intersections = []
+        for i, (link, req_bw) in enumerate(links.items()):
+            req_bw = min(req_bw, link.bandwidth)  # ceil the bw
+            windows = link.get_idle_window(req_bw, duration, best_case_start, tensors)
+            if i == 0:
+                idle_intersections = windows
+            else:
+                idle_intersections = intersections(idle_intersections, windows)
+                idle_intersections = [period for period in idle_intersections if period[1] - period[0] >= duration]
+        return idle_intersections[0][0]
